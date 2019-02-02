@@ -150,6 +150,50 @@ func (s *Server) RegisterAfterFunc(f func(i *RequestInfo)) {
 	s.afterFunc = f
 }
 
+func (s *Server) Serve(r *http.Request, codecReq CodecRequest) (errCode int, errString string, errValue []reflect.Value, reply reflect.Value) {
+	// Get service method to be called.
+	method, errMethod := codecReq.Method()
+	if errMethod != nil {
+		errCode = 400
+		errString = errMethod.Error()
+		return
+	}
+	serviceSpec, methodSpec, errGet := s.services.get(method)
+	if errGet != nil {
+		errCode = 400
+		errString = errGet.Error()
+		return
+	}
+	// Decode the args.
+	args := reflect.New(methodSpec.argsType)
+	if errRead := codecReq.ReadRequest(args.Interface()); errRead != nil {
+		errCode = 400
+		errString = errRead.Error()
+		return
+	}
+
+	// Call the service method.
+	reply = reflect.New(methodSpec.replyType)
+
+	// omit the HTTP request if the service method doesn't accept it
+	if serviceSpec.passReq {
+		errValue = methodSpec.method.Func.Call([]reflect.Value{
+			serviceSpec.rcvr,
+			reflect.ValueOf(r),
+			args,
+			reply,
+		})
+	} else {
+		errValue = methodSpec.method.Func.Call([]reflect.Value{
+			serviceSpec.rcvr,
+			args,
+			reply,
+		})
+	}
+
+	return
+}
+
 // ServeHTTP
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -172,23 +216,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, 415, "rpc: unrecognized Content-Type: "+contentType)
 		return
 	}
+
 	// Create a new codec request.
 	codecReq := codec.NewRequest(r)
+
+	///////////////////////////
+	// before intercept func
+	///////////////////////////
+
 	// Get service method to be called.
 	method, errMethod := codecReq.Method()
 	if errMethod != nil {
 		s.writeError(w, 400, errMethod.Error())
-		return
-	}
-	serviceSpec, methodSpec, errGet := s.services.get(method)
-	if errGet != nil {
-		s.writeError(w, 400, errGet.Error())
-		return
-	}
-	// Decode the args.
-	args := reflect.New(methodSpec.argsType)
-	if errRead := codecReq.ReadRequest(args.Interface()); errRead != nil {
-		s.writeError(w, 400, errRead.Error())
 		return
 	}
 
@@ -209,25 +248,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Method:  method,
 		})
 	}
-
-	// Call the service method.
-	reply := reflect.New(methodSpec.replyType)
-
-	// omit the HTTP request if the service method doesn't accept it
-	var errValue []reflect.Value
-	if serviceSpec.passReq {
-		errValue = methodSpec.method.Func.Call([]reflect.Value{
-			serviceSpec.rcvr,
-			reflect.ValueOf(r),
-			args,
-			reply,
-		})
-	} else {
-		errValue = methodSpec.method.Func.Call([]reflect.Value{
-			serviceSpec.rcvr,
-			args,
-			reply,
-		})
+	errCode, errStr, errValue, reply := s.Serve(r, codecReq)
+	if errCode != 0 || len(errStr) != 0 {
+		s.writeError(w, errCode, errStr)
+		return
 	}
 
 	// Cast the result to error if needed.
