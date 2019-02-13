@@ -7,6 +7,7 @@ package rpc
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"reflect"
 	"strings"
@@ -18,7 +19,7 @@ import (
 
 // Codec creates a CodecRequest to process each request.
 type Codec interface {
-	NewRequest(*http.Request) CodecRequest
+	NewRequest(rawReqString []byte, err error) CodecRequest
 }
 
 // CodecRequest decodes a request and encodes a response using a specific
@@ -116,6 +117,7 @@ func (s *Server) RegisterTCPService(receiver interface{}, name string) error {
 //
 // The method uses a dotted notation as in "Service.Method".
 func (s *Server) HasMethod(method string) bool {
+	fmt.Printf("RRRR hello2\n")
 	if _, _, err := s.services.get(method); err == nil {
 		return true
 	}
@@ -194,12 +196,7 @@ func (s *Server) Serve(r *http.Request, codecReq CodecRequest) (errCode int, err
 	return
 }
 
-// ServeHTTP
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		s.writeError(w, 405, "rpc: POST method required, received "+r.Method)
-		return
-	}
+func (s *Server) NewCodec(r *http.Request) Codec {
 	contentType := r.Header.Get("Content-Type")
 	idx := strings.Index(contentType, ";")
 	if idx != -1 {
@@ -212,13 +209,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, c := range s.codecs {
 			codec = c
 		}
-	} else if codec = s.codecs[strings.ToLower(contentType)]; codec == nil {
-		s.writeError(w, 415, "rpc: unrecognized Content-Type: "+contentType)
+	} else {
+		codec = s.codecs[strings.ToLower(contentType)]
+	}
+
+	return codec
+}
+
+// ServeHTTP
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.writeError(w, 405, "rpc: POST method required, received "+r.Method)
+		return
+	}
+
+	codec := s.NewCodec(r)
+	if codec == nil {
+		s.writeError(w, 415, "rpc: unrecognized Content-Type: "+r.Header.Get("Content-Type"))
 		return
 	}
 
 	// Create a new codec request.
-	codecReq := codec.NewRequest(r)
+	rawxml, err := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+	codecReq := codec.NewRequest(rawxml, err)
 
 	///////////////////////////
 	// before intercept func
