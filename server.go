@@ -7,7 +7,6 @@ package rpc
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"reflect"
 	"strings"
@@ -21,7 +20,7 @@ import (
 type Codec interface {
 	// Get real method name.
 	GetMethodName(string) string
-	NewRequest(rawReqString []byte, err error) CodecRequest
+	NewRequest(*http.Request) CodecRequest
 }
 
 // CodecRequest decodes a request and encodes a response using a specific
@@ -291,9 +290,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a new codec request.
-	rawxml, err := ioutil.ReadAll(r.Body)
-	defer r.Body.Close()
-	codecReq := codec.NewRequest(rawxml, err)
+	codecReq := codec.NewRequest(r)
 
 	///////////////////////////
 	// before intercept func
