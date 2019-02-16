@@ -19,6 +19,8 @@ import (
 
 // Codec creates a CodecRequest to process each request.
 type Codec interface {
+	// Get real method name.
+	GetMethodName(string) string
 	NewRequest(rawReqString []byte, err error) CodecRequest
 }
 
@@ -152,7 +154,84 @@ func (s *Server) RegisterAfterFunc(f func(i *RequestInfo)) {
 	s.afterFunc = f
 }
 
-func (s *Server) Serve(r *http.Request, codecReq CodecRequest) (errCode int, errString string, errValue []reflect.Value, reply reflect.Value) {
+func (s *Server) callMethod(r *http.Request, serviceSpec *service, methodSpec *serviceMethod, args reflect.Value) (
+	errValue []reflect.Value, reply reflect.Value) {
+
+	// Call the service method.
+	reply = reflect.New(methodSpec.replyType)
+
+	// omit the HTTP request if the service method doesn't accept it
+	if serviceSpec.passReq {
+		errValue = methodSpec.method.Func.Call(
+			[]reflect.Value{
+				serviceSpec.rcvr,
+				reflect.ValueOf(r),
+				args,
+				reply,
+			},
+		)
+
+		return
+	}
+
+	errValue = methodSpec.method.Func.Call(
+		[]reflect.Value{
+			serviceSpec.rcvr,
+			args,
+			reply,
+		},
+	)
+
+	return
+}
+
+func (s *Server) ServeApiMethod(r *http.Request, MethodName string, Params []string) (
+	errCode int, errString string, errValue []reflect.Value, reply reflect.Value) {
+
+	serviceSpec, methodSpec, errGet := s.services.get(MethodName)
+	if errGet != nil {
+		errCode = 400
+		errString = errGet.Error()
+		return
+	}
+
+	// assign @Params to args
+	args := reflect.New(methodSpec.argsType)
+	fieldNum := args.Elem().NumField()
+	if fieldNum != 0 && fieldNum != 1 {
+		errCode = 400
+		errString = fmt.Sprintf("wrong http api method @args field number %d != 1", args.Elem().NumField())
+		return
+	}
+	if fieldNum == 1 {
+		field := args.Elem().Field(0)
+		if field.Kind() != reflect.Slice {
+			errCode = 400
+			errString = "http api method @args elem item type is not array"
+			return
+		}
+		fieldSlice := reflect.MakeSlice(reflect.TypeOf(field.Interface()), len(Params), len(Params))
+		item := fieldSlice.Index(0)
+		if item.Type().Kind() != reflect.String {
+			errCode = 400
+			errString = "http api method @args elem item[0] type is string"
+			return
+		}
+		for i := 0; i < len(Params); i++ {
+			item = fieldSlice.Index(i)
+			item.SetString(Params[i])
+		}
+		field.Set(fieldSlice)
+	}
+
+	errValue, reply = s.callMethod(r, serviceSpec, methodSpec, args)
+
+	return
+}
+
+func (s *Server) Serve(r *http.Request, codecReq CodecRequest) (
+	errCode int, errString string, errValue []reflect.Value, reply reflect.Value) {
+
 	// Get service method to be called.
 	method, errMethod := codecReq.Method()
 	if errMethod != nil {
@@ -174,25 +253,7 @@ func (s *Server) Serve(r *http.Request, codecReq CodecRequest) (errCode int, err
 		return
 	}
 
-	// Call the service method.
-	reply = reflect.New(methodSpec.replyType)
-
-	// omit the HTTP request if the service method doesn't accept it
-	if serviceSpec.passReq {
-		errValue = methodSpec.method.Func.Call([]reflect.Value{
-			serviceSpec.rcvr,
-			reflect.ValueOf(r),
-			args,
-			reply,
-		})
-	} else {
-		errValue = methodSpec.method.Func.Call([]reflect.Value{
-			serviceSpec.rcvr,
-			args,
-			reply,
-		})
-	}
-
+	errValue, reply = s.callMethod(r, serviceSpec, methodSpec, args)
 	return
 }
 
