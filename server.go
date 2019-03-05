@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -184,6 +185,61 @@ func (s *Server) callMethod(r *http.Request, serviceSpec *service, methodSpec *s
 	return
 }
 
+func decodeArgs(argsType reflect.Type, params []string) reflect.Value {
+	args := reflect.New(argsType)
+	dataStruct := reflect.Indirect(args)
+	dataStructType := dataStruct.Type()
+	for i := 0; i < dataStructType.NumField(); i++ {
+		fieldType := dataStructType.Field(i)
+		fieldValue := dataStruct.Field(i)
+		if len(params) > i {
+			switch fieldType.Type.Kind() {
+			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+				n, _ := strconv.Atoi(params[i])
+				fieldValue.SetInt(int64(n))
+			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				n, _ := strconv.Atoi(params[i])
+				fieldValue.SetUint(uint64(n))
+			case reflect.Float32:
+				n, _ := strconv.ParseFloat(params[i], 32)
+				fieldValue.SetFloat(n)
+			case reflect.Float64:
+				n, _ := strconv.ParseFloat(params[i], 64)
+				fieldValue.SetFloat(n)
+			case reflect.String:
+				fieldValue.SetString(params[i])
+			case reflect.Bool:
+				fieldValue.SetBool(params[i] == "1" || params[i] == "true" || params[i] == "TRUE")
+			case reflect.Slice:
+				fieldValue.SetBytes([]byte(params[i]))
+			}
+		} else if fieldType.Tag.Get("default") != "" {
+			val := fieldType.Tag.Get("default")
+			switch fieldType.Type.Kind() {
+			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+				n, _ := strconv.Atoi(val)
+				fieldValue.SetInt(int64(n))
+			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				n, _ := strconv.Atoi(val)
+				fieldValue.SetUint(uint64(n))
+			case reflect.Float32:
+				n, _ := strconv.ParseFloat(val, 32)
+				fieldValue.SetFloat(n)
+			case reflect.Float64:
+				n, _ := strconv.ParseFloat(val, 64)
+				fieldValue.SetFloat(n)
+			case reflect.String:
+				fieldValue.SetString(val)
+			case reflect.Bool:
+				fieldValue.SetBool(val == "1" || val == "true" || val == "TRUE")
+			case reflect.Slice:
+				fieldValue.SetBytes([]byte(val))
+			}
+		}
+	}
+	return args
+}
+
 func (s *Server) ServeApiMethod(r *http.Request, MethodName string, Params []string) (
 	errCode int, errString string, errValue []reflect.Value, reply reflect.Value) {
 
@@ -195,34 +251,7 @@ func (s *Server) ServeApiMethod(r *http.Request, MethodName string, Params []str
 	}
 
 	// assign @Params to args
-	args := reflect.New(methodSpec.argsType)
-	fieldNum := args.Elem().NumField()
-	if fieldNum != 0 && fieldNum != 1 {
-		errCode = 400
-		errString = fmt.Sprintf("wrong http api method @args field number %d != 1", args.Elem().NumField())
-		return
-	}
-	if fieldNum == 1 {
-		field := args.Elem().Field(0)
-		if field.Kind() != reflect.Slice {
-			errCode = 400
-			errString = "http api method @args elem item type is not array"
-			return
-		}
-		fieldSlice := reflect.MakeSlice(reflect.TypeOf(field.Interface()), len(Params), len(Params))
-		item := fieldSlice.Index(0)
-		if item.Type().Kind() != reflect.String {
-			errCode = 400
-			errString = "http api method @args elem item[0] type is string"
-			return
-		}
-		for i := 0; i < len(Params); i++ {
-			item = fieldSlice.Index(i)
-			item.SetString(Params[i])
-		}
-		field.Set(fieldSlice)
-	}
-
+	args := decodeArgs(methodSpec.argsType, Params)
 	errValue, reply = s.callMethod(r, serviceSpec, methodSpec, args)
 
 	return
