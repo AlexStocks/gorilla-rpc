@@ -7,6 +7,7 @@ package rpc
 
 import (
 	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 )
@@ -142,89 +143,149 @@ func (w *MockResponseWriter) WriteHeader(status int) {
 	w.Status = status
 }
 
-func TestServeHTTP(t *testing.T) {
-	const (
-		A = 2
-		B = 3
-	)
-	expected := A * B
+// func TestServeHTTP(t *testing.T) {
+// 	const (
+// 		A = 2
+// 		B = 3
+// 	)
+// 	expected := A * B
 
-	s := NewServer()
-	s.RegisterService(new(Service1), "")
-	s.RegisterCodec(MockCodec{A, B}, "mock")
+// 	s := NewServer()
+// 	s.RegisterService(new(Service1), "")
+// 	s.RegisterCodec(MockCodec{A, B}, "mock")
 
-	r, err := http.NewRequest("POST", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Header.Set("Content-Type", "mock; dummy")
-	w := NewMockResponseWriter()
-	s.ServeHTTP(w, r)
-	if w.Status != 200 {
-		t.Errorf("Status was %d, should be 200.", w.Status)
-	}
-	if w.Body != strconv.Itoa(expected) {
-		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
-	}
+// 	r, err := http.NewRequest("POST", "", nil)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	r.Header.Set("Content-Type", "mock; dummy")
+// 	w := NewMockResponseWriter()
+// 	s.ServeHTTP(w, r)
+// 	if w.Status != 200 {
+// 		t.Errorf("Status was %d, should be 200.", w.Status)
+// 	}
+// 	if w.Body != strconv.Itoa(expected) {
+// 		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
+// 	}
 
-	// Test wrong Content-Type
-	r.Header.Set("Content-Type", "invalid")
-	w = NewMockResponseWriter()
-	s.ServeHTTP(w, r)
-	if w.Status != 415 {
-		t.Errorf("Status was %d, should be 415.", w.Status)
-	}
-	if w.Body != "rpc: unrecognized Content-Type: invalid" {
-		t.Errorf("Wrong response body.")
-	}
+// 	// Test wrong Content-Type
+// 	r.Header.Set("Content-Type", "invalid")
+// 	w = NewMockResponseWriter()
+// 	s.ServeHTTP(w, r)
+// 	if w.Status != 415 {
+// 		t.Errorf("Status was %d, should be 415.", w.Status)
+// 	}
+// 	if w.Body != "rpc: unrecognized Content-Type: invalid" {
+// 		t.Errorf("Wrong response body.")
+// 	}
 
-	// Test omitted Content-Type; codec should default to the sole registered one.
-	r.Header.Del("Content-Type")
-	w = NewMockResponseWriter()
-	s.ServeHTTP(w, r)
-	if w.Status != 200 {
-		t.Errorf("Status was %d, should be 200.", w.Status)
-	}
-	if w.Body != strconv.Itoa(expected) {
-		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
-	}
+// 	// Test omitted Content-Type; codec should default to the sole registered one.
+// 	r.Header.Del("Content-Type")
+// 	w = NewMockResponseWriter()
+// 	s.ServeHTTP(w, r)
+// 	if w.Status != 200 {
+// 		t.Errorf("Status was %d, should be 200.", w.Status)
+// 	}
+// 	if w.Body != strconv.Itoa(expected) {
+// 		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
+// 	}
+// }
+
+// func TestInterception(t *testing.T) {
+// 	const (
+// 		A = 2
+// 		B = 3
+// 	)
+// 	expected := A * B
+
+// 	r2, err := http.NewRequest("POST", "mocked/request", nil)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	s := NewServer()
+// 	s.RegisterService(new(Service1), "")
+// 	s.RegisterCodec(MockCodec{A, B}, "mock")
+// 	s.RegisterInterceptFunc(func(i *RequestInfo) *http.Request {
+// 		return r2
+// 	})
+// 	s.RegisterAfterFunc(func(i *RequestInfo) {
+// 		if i.Request != r2 {
+// 			t.Errorf("Request was %v, should be %v.", i.Request, r2)
+// 		}
+// 	})
+
+// 	r, err := http.NewRequest("POST", "", nil)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	r.Header.Set("Content-Type", "mock; dummy")
+// 	w := NewMockResponseWriter()
+// 	s.ServeHTTP(w, r)
+// 	if w.Status != 200 {
+// 		t.Errorf("Status was %d, should be 200.", w.Status)
+// 	}
+// 	if w.Body != strconv.Itoa(expected) {
+// 		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
+// 	}
+// }
+
+type StartProcessArgs struct {
+	Name string
+	Wait bool `default:"true"`
 }
 
-func TestInterception(t *testing.T) {
-	const (
-		A = 2
-		B = 3
-	)
-	expected := A * B
+type LogReadInfo struct {
+	Offset int
+	Length int
+}
 
-	r2, err := http.NewRequest("POST", "mocked/request", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+type ProcessTailLog struct {
+	LogData  string
+	Offset   int64
+	Overflow bool
+}
 
-	s := NewServer()
-	s.RegisterService(new(Service1), "")
-	s.RegisterCodec(MockCodec{A, B}, "mock")
-	s.RegisterInterceptFunc(func(i *RequestInfo) *http.Request {
-		return r2
-	})
-	s.RegisterAfterFunc(func(i *RequestInfo) {
-		if i.Request != r2 {
-			t.Errorf("Request was %v, should be %v.", i.Request, r2)
-		}
-	})
-
-	r, err := http.NewRequest("POST", "", nil)
-	if err != nil {
-		t.Fatal(err)
+func Test_decodeArgs(t *testing.T) {
+	type args struct {
+		argsType reflect.Type
+		params   []string
 	}
-	r.Header.Set("Content-Type", "mock; dummy")
-	w := NewMockResponseWriter()
-	s.ServeHTTP(w, r)
-	if w.Status != 200 {
-		t.Errorf("Status was %d, should be 200.", w.Status)
+	tests := []struct {
+		name string
+		args args
+		want interface{}
+	}{
+		{
+			name: "StartProcessArgs",
+			args: args{
+				argsType: reflect.Indirect(reflect.ValueOf(&StartProcessArgs{})).Type(),
+				params:   []string{"proc1"},
+			},
+			want: &StartProcessArgs{"proc1", true},
+		},
+		{
+			name: "LogReadInfo",
+			args: args{
+				argsType: reflect.Indirect(reflect.ValueOf(&LogReadInfo{})).Type(),
+				params:   []string{"1", "2"},
+			},
+			want: &LogReadInfo{1, 2},
+		},
+		{
+			name: "ProcessTailLog",
+			args: args{
+				argsType: reflect.Indirect(reflect.ValueOf(&ProcessTailLog{})).Type(),
+				params:   []string{"test", "111", "1"},
+			},
+			want: &ProcessTailLog{"test", 111, true},
+		},
 	}
-	if w.Body != strconv.Itoa(expected) {
-		t.Errorf("Response body was %s, should be %s.", w.Body, strconv.Itoa(expected))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := decodeArgs(tt.args.argsType, tt.args.params); !reflect.DeepEqual(got.Interface(), tt.want) {
+				t.Errorf("decodeArgs() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
